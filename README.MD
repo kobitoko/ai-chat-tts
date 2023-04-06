@@ -28,3 +28,15 @@ You technically don't need CUDA, so you could just install `torch` without `+cu1
 
 `sample.wav` is just a recording of https://www.youtube.com/watch?v=fkoy1_R5N8M  
 
+----
+
+To run `gpt4all-talker.py`
+
+1. Get the models from https://github.com/nomic-ai/gpt4all#try-it-yourself
+2. install this https://github.com/nomic-ai/pyllamacpp#supported-model 
+3. [grab the tokenizer.model](https://github.com/nomic-ai/pyllamacpp/issues/5) from https://huggingface.co/decapoda-research/llama-7b-hf/blob/main/tokenizer.model
+4. On the terminal run 
+```
+pyllamacpp-convert-gpt4all path/to/gpt4all_model.bin path/to/llama_tokenizer path/to/gpt4all-lora-quantized-ggml.bin
+```
+5. Finally `py -3.9 gpt4all-talker.py`
