@@ -24,7 +24,9 @@ If Coqui TTS complains about numpy, you've got a too modern numpy and probably n
 For the reason above it runs best with [Python 3.9](https://www.python.org/downloads/release/python-3913/), to run it type `py -3.9 talker.py` or `py -3.9 talker.py --help` to view its parameters.  
 There's also a test app to test coqui-ai TTS. `py -3.9 tts-test.py`.  
 
-You technically don't need CUDA, so you could just install `torch` without `+cu118` in `requirements.txt`. Just remember to put `gpu=False` in the TTS parameter `talker.py` and `tts-test`.
+To install dependencies:  
+You technically don't need [CUDA](https://developer.nvidia.com/cuda-downloads) since it all can run on the cpu too.  
+So you could just install `requirements.txt`'s `torch`, `torchaudio`, and `torchvision` without the `+cu118` part and remove the `--extra-index-url` line from the file. Just remember to put `gpu=False` in the TTS parameter `talker.py` and `tts-test`.  
+`pip3.9 install -r requirements.txt`  
 
 `sample.wav` is just a recording of https://www.youtube.com/watch?v=fkoy1_R5N8M  
-

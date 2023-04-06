@@ -23,6 +23,10 @@ useWavTTS = True
 # modelName = "tts_models/en/ljspeech/tacotron2-DDC"
 modelName = "tts_models/multilingual/multi-dataset/your_tts" if useWavTTS else "tts_models/en/ljspeech/fast_pitch"
 
+# TODO: Perhaps use number_to_words pip install inflect to replace numbers to tts readable words in the input.
+def textConvertNumbers(text):
+    return text
+
 #vocoder = "vocoder_models/en/ljspeech/multiband-melgan"
 #vocoder = "vocoder_models/en/ljspeech/hifigan_v2"
 #tts = TTS(modelName, gpu=False, vocoder_path=vocoder)
@@ -37,5 +41,5 @@ while(True):
     a = sys.stdin.readline().strip()
     if a == "" or a.isspace():
         a = "Hi!"
+    a = textConvertNumbers(a)
     os.remove(name)
-

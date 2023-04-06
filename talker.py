@@ -10,18 +10,27 @@ from TTS.api import TTS
 #from io import BytesIO
 #from pydub import AudioSegment
 from playsound import playsound
+import torch
+import numpy
+import speech_recognition as sr
+import whisper
+
+recognizer = None
+micDeviceIndex = None
+audioModel = None
 
 @click.command()
 @click.option("--sample", default="sample.wav", help="The voice file to use to inspire the text to speech.", type=str)
 @click.option("--first_prompt", default="Hi!", help="Whether to start of immediately with a prompt.", type=str)
 @click.option("--keep_output", default=False, help="Whether to keep the generated voice file after it is finished with it.", is_flag=True, type=bool)
+@click.option("--use_voice", default=False, help="Whether to use voice input instead of text", is_flag=True, type=bool)
 
-def main(sample, first_prompt, keep_output):
+def main(sample, first_prompt, keep_output, use_voice):
     os.environ["PHYTHONUNBUFFERED"] = "1"
     # alpaca.cpp chat.exe build from + the alpaca model at https://github.com/antimatter15/alpaca.cpp
-    #command = ["chat.exe", "--interactive-start"]
+    command = ["chat.exe", "--interactive-start"]
     # gpt4all from https://github.com/nomic-ai/gpt4all/tree/main/chat
-    command = ["gpt4all-lora-quantized-win64.exe", "--interactive-start"]
+    #command = ["gpt4all-lora-quantized-win64.exe", "--interactive-start"]
 
     # run  py -3.9 talker.py
     print("running chat")
@@ -33,7 +42,7 @@ def main(sample, first_prompt, keep_output):
         # gpu true if you have CUDA hardware + installed, also need to reinstall torch with cuda! Needs to be compiled with CUDA to work.
         # `pip3.9 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117`
         tts = TTS(modelName, gpu=True)
-
+        initListener()
         #tts.tts_to_file(text="Hello! Testing here. Is this ok?", file_path="output.wav")
         #tts = gTTS("Hello!", lang="en")
         #tts.save("file.mp3")
@@ -52,7 +61,7 @@ def main(sample, first_prompt, keep_output):
         firstRun = True
         timeTaken = 0.0
         while running:
-            if  process.stdout.readable():
+            if process.stdout.readable():
                 print("\nReply:")
                 lineByte = process.stdout.readline()
                 textProcessTime = time.time() - timeTaken
@@ -90,15 +99,21 @@ def main(sample, first_prompt, keep_output):
                 timeTaken = time.time()
                 print("Ready!")
             elif process.stdin.writable():
-                print("Write something (to quit, type quit or exit):")
-                input = sys.stdin.readline().lstrip().rstrip()
-                if input.lower() == "quit" or input.lower() == "exit":
+                if use_voice:
+                    print("Say something, starting with \"Computer,\". To quit, say \"exit\"):")
+                    input = listenToMic().replace("Computer,", "", 1).strip()
+                else:
+                    print("Write something (to quit, type \"exit\"):")
+                    input = sys.stdin.readline().strip()
+                inputQuitCheck = input.lower().replace(".", "")
+                if inputQuitCheck == "exit":
                     running = False
                     break
                 elif input == "" or input.isspace():
                     input = "Hi!"
                 # Newline is important, so the executable knows you've entered something and are done with it.
                 input = emoji.replace_emoji(input, replace=lambda chars, data_dict: data_dict['en']) + "\n"
+                # TODO: Perhaps use number_to_words pip install inflect to replace numbers to tts readable words in the input.
                 encoded = input.encode('utf-8')
                 process.stdin.write(encoded)
                 process.stdin.flush()
@@ -109,6 +124,37 @@ def main(sample, first_prompt, keep_output):
     finally:
         print("Finished.")
         process.terminate()
+
+def initListener():
+    global recognizer
+    global audioModel
+    # https://github.com/mallorbc/whisper_mic#available-models-and-languages
+    # There are no english models for large 
+    model = "small.en"
+    audioModel = whisper.load_model(model)
+    recognizer = sr.Recognizer()
+    recognizer.energy_threshold = 5000
+    recognizer.dynamic_energy_threshold = False
+    recognizer.pause_threshold = 0.8
+
+# https://github.com/mallorbc/whisper_mic#available-models-and-languages
+def listenToMic(acceptText = "Computer"):
+    result = ""
+    keepListening = True
+    with sr.Microphone(device_index=micDeviceIndex, sample_rate=16000) as mic:
+        # https://github.com/Uberi/speech_recognition/blob/master/reference/library-reference.rst#recognizer_instanceadjust_for_ambient_noisesource-audiosource-duration-float--1---none
+        recognizer.adjust_for_ambient_noise(mic, duration=1)
+        while(keepListening):
+            print(" > Listening...")
+            audio = recognizer.listen(mic, phrase_time_limit=10)
+            audioBuffer = numpy.frombuffer(audio.get_raw_data(), numpy.int16).flatten().astype(numpy.float32)
+            torchAudio = torch.from_numpy( audioBuffer / 32768.0)
+            result = audioModel.transcribe(torchAudio, language='english')
+            text = result["text"]
+            print(" > you said: " + text)
+            if acceptText == "" or (text.lower().find(acceptText.lower()) > -1) or text.lower().find("exit.") > -1:
+                keepListening = False
+    return result["text"]
 
 if __name__ == "__main__":
     main()
