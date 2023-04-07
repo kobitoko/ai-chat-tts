@@ -14,10 +14,12 @@ import torch
 import numpy
 import speech_recognition as sr
 import whisper
+import inflect
 
 recognizer = None
 micDeviceIndex = None
 audioModel = None
+inflector = None
 
 @click.command()
 @click.option("--sample", default="sample.wav", help="The voice file to use to inspire the text to speech.", type=str)
@@ -42,7 +44,6 @@ def main(sample, first_prompt, keep_output, use_voice):
         # gpu true if you have CUDA hardware + installed, also need to reinstall torch with cuda! Needs to be compiled with CUDA to work.
         # `pip3.9 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117`
         tts = TTS(modelName, gpu=True)
-        initListener()
         #tts.tts_to_file(text="Hello! Testing here. Is this ok?", file_path="output.wav")
         #tts = gTTS("Hello!", lang="en")
         #tts.save("file.mp3")
@@ -55,6 +56,11 @@ def main(sample, first_prompt, keep_output, use_voice):
         # if it complains about MeCab missing dll, put `libmecab.dll` from here below into system32 from https://stackoverflow.com/a/68751762
         #C:\Users\username\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.9_qbz5n2kfra8p0\LocalCache\local-packages\lib\site-packages\MeCab
 
+        initListener()
+
+        global inflector
+        inflector = inflect.engine()
+
         process = Popen(command, stdout=PIPE, stdin=PIPE)
         print("Starting up.")
         running = True
@@ -65,18 +71,23 @@ def main(sample, first_prompt, keep_output, use_voice):
                 print("\nReply:")
                 lineByte = process.stdout.readline()
                 textProcessTime = time.time() - timeTaken
-                # clean up the line from the terminal
                 line = lineByte.decode('utf-8')
+                # clean up the line from the terminal before checking it.
                 line = line.replace(">", "", 1)
-                line = line.lstrip().rstrip()
+                line = line.strip()
                 # ['\x1b[1m\x1b[32m\x1b[0mMy favorite game is Minecraft.', 'It has a perfect balance between creativity, exploration, problem solving and collaboration with other players in the world.', 'I love building structures from blocks or crafting items to use during adventures!', '\x1b[0m']
                 # line still has ansi escape sequences like \x1b[1m\x1b[32m\x1b[0m\x1b[1m\x1b[32m\x1b[0m
                 ansiEscape =re.compile(r'(\x9b|\x1b\[)[0-?]*[ -\/]*[@-~]')
                 line = re.sub(ansiEscape,'', line)
-                # replace emojis with a readable description, taken from https://carpedm20.github.io/emoji/docs/#replacing-and-removing-emoji
-                line = emoji.replace_emoji(line, replace=lambda chars, data_dict: data_dict['en'])
+                # Only speak if the line contains anything.
                 if line:
+                    # replace emojis with a readable description, taken from https://carpedm20.github.io/emoji/docs/#replacing-and-removing-emoji
+                    line = emoji.replace_emoji(line, replace=lambda chars, data_dict: data_dict['en'])
+
                     print(line)
+                    # Convert numbers to TTS readable numbers.
+                    line = textConvertNumbers(line)
+
                     if not firstRun:
                         print(" > Processing input time: " + str(textProcessTime) + "s.")
                     print(" > Generating voice...")
@@ -84,7 +95,8 @@ def main(sample, first_prompt, keep_output, use_voice):
                     #tts.save("file.mp3")
                     #tts.tts_to_file(text=line, file_path="output.wav")
                     name = "out/output_"+ str(time.time()) + ".wav"
-                    tts.tts_to_file(text=line, file_path=name, speaker_wav=sample, language="en")
+                    # emotions are ["Neutral", "Happy", "Sad", "Angry", "Dull"]
+                    tts.tts_to_file(text=line, file_path=name, speaker_wav=sample, language="en", emotion="Happy", speed=1)
                     time.sleep(0.1)
                     playsound(name)
                     if not keep_output:
@@ -111,9 +123,9 @@ def main(sample, first_prompt, keep_output, use_voice):
                     break
                 elif input == "" or input.isspace():
                     input = "Hi!"
-                # Newline is important, so the executable knows you've entered something and are done with it.
                 input = emoji.replace_emoji(input, replace=lambda chars, data_dict: data_dict['en']) + "\n"
-                # TODO: Perhaps use number_to_words pip install inflect to replace numbers to tts readable words in the input.
+                # Newline is important, so the executable knows you've entered something and are done with it.
+                input = input + "\n"
                 encoded = input.encode('utf-8')
                 process.stdin.write(encoded)
                 process.stdin.flush()
@@ -155,6 +167,40 @@ def listenToMic(acceptText = "Computer"):
             if acceptText == "" or (text.lower().find(acceptText.lower()) > -1) or text.lower().find("exit.") > -1:
                 keepListening = False
     return result["text"]
+
+def textConvertNumbers(text=""):
+    texts = text.split()
+    newTexts = []
+    for word in texts:
+        if word.isnumeric():
+            newTexts.append(inflector.number_to_words(word))
+            continue
+        newWord = word
+        prepend = None
+        postpend = None
+        if newWord[0] == "-":
+            prepend = "negative"
+            newWord = newWord[1:]
+        if not newWord[len(newWord) - 1].isalnum():
+            # number is at the end of a sentence of followed by a comma
+            postpend = newWord[len(newWord) - 1]
+            newWord = newWord[0:-1]
+        # Check if its like a decimal separator (US ".") or a digit grouping (US ",") for example 12,345.67
+        newWord = newWord.replace(",","")
+        # inflector replaces decimal with "point" by default
+        isNumber = newWord.replace(".","").isnumeric()
+
+        if prepend != None:
+            newTexts.append(prepend)
+        if isNumber:
+            newTexts.append(inflector.number_to_words(newWord))
+        else:
+            # It is not a number, just add the word
+            newTexts.append(word)
+            continue
+        if postpend != None:
+            newTexts.append(postpend)
+    return " ".join(newTexts)
 
 if __name__ == "__main__":
     main()

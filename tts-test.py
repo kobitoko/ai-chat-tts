@@ -2,6 +2,7 @@ from subprocess import *
 import time
 import sys
 import os
+import inflect
 from TTS.api import TTS
 from playsound import playsound
 #from pydub import AudioSegment
@@ -23,23 +24,59 @@ useWavTTS = True
 # modelName = "tts_models/en/ljspeech/tacotron2-DDC"
 modelName = "tts_models/multilingual/multi-dataset/your_tts" if useWavTTS else "tts_models/en/ljspeech/fast_pitch"
 
-# TODO: Perhaps use number_to_words pip install inflect to replace numbers to tts readable words in the input.
-def textConvertNumbers(text):
-    return text
+inflector = inflect.engine()
+
+def textConvertNumbers(text=""):
+    texts = text.split()
+    newTexts = []
+    for word in texts:
+        if word.isnumeric():
+            newTexts.append(inflector.number_to_words(word))
+            continue
+        newWord = word
+        prepend = None
+        postpend = None
+        if newWord[0] == "-":
+            prepend = "negative"
+            newWord = newWord[1:]
+        if not newWord[len(newWord) - 1].isalnum():
+            # number is at the end of a sentence of followed by a comma
+            postpend = newWord[len(newWord) - 1]
+            newWord = newWord[0:-1]
+        # Check if its like a decimal separator (US ".") or a digit grouping (US ",") for example 12,345.67
+        newWord = newWord.replace(",","")
+        # inflector replaces decimal with "point" by default
+        isNumber = newWord.replace(".","").isnumeric()
+
+        if prepend != None:
+            newTexts.append(prepend)
+        if isNumber:
+            newTexts.append(inflector.number_to_words(newWord))
+        else:
+            # It is not a number, just add the word
+            newTexts.append(word)
+            continue
+        if postpend != None:
+            newTexts.append(postpend)
+    return " ".join(newTexts)
 
 #vocoder = "vocoder_models/en/ljspeech/multiband-melgan"
 #vocoder = "vocoder_models/en/ljspeech/hifigan_v2"
 #tts = TTS(modelName, gpu=False, vocoder_path=vocoder)
 tts = TTS(modelName, gpu=True)
-a = "Hello everyone! Welcome, this is a test voice."
+test = "Hello! This is a test. -12,345.67. 48!"
+print(test)
+test = textConvertNumbers(test)
+
 while(True):
     name = "out/output_"+ str(time.time()) + ".wav"
-    tts.tts_to_file(text=a, file_path=name, speaker_wav="sample.wav", language="en") if useWavTTS else tts.tts_to_file(text=a, file_path=name)
+    # emotions are ["Neutral", "Happy", "Sad", "Angry", "Dull"]
+    tts.tts_to_file(text=test, file_path=name, speaker_wav="sample.wav", language="en", emotion="Happy", speed=1) if useWavTTS else tts.tts_to_file(text=test, file_path=name)
     time.sleep(0.1)
     playsound(name)
     print("Input:")
-    a = sys.stdin.readline().strip()
-    if a == "" or a.isspace():
-        a = "Hi!"
-    a = textConvertNumbers(a)
+    test = sys.stdin.readline().strip()
+    if test == "" or test.isspace():
+        test = "Hi!"
+    test = textConvertNumbers(test)
     os.remove(name)
