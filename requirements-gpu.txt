@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+numpy==1.21.6
+torch==2.0.0+cu118 #for TTS using CUDA, remove +cu118 and the extra-index-url for TTS cpu version. Don't forget to update TTS calls to be `gpu=False`.
+torchaudio==2.0.1+cu118
+torchvision==0.15.1+cu118
+TTS==0.13.0
+click==8.1.3
+emoji==2.2.0
+PyAudio==0.2.13 #used by SpeechRecognition
+SpeechRecognition==3.10.0
+git+https://github.com/openai/whisper.git
+inflect==5.6.0 #TTS depends on this specific version
+sounddevice==0.4.6 
