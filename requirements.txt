@@ -9,4 +9,5 @@ PyAudio==0.2.13 #used by SpeechRecognition
 SpeechRecognition==3.10.0
 git+https://github.com/openai/whisper.git
 inflect==5.6.0 #TTS depends on this specific version
-sounddevice==0.4.6 
+sounddevice==0.4.6
+Requests==2.31.0

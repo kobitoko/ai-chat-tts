@@ -28,7 +28,7 @@ class AiSpeak:
         
         # gpu true if you have CUDA hardware + installed, also need to reinstall torch with cuda! Needs to be compiled with CUDA to work.
         # `pip3.9 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117`
-        self.tts = TTS(modelName, gpu=False)
+        self.tts = TTS(modelName, gpu=True)
 
     def testTts(self):
         initialText = "Hello - 😀 This is a test. -12,345.67. 48!"

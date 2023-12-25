@@ -1,22 +1,24 @@
 from subprocess import *
 import time
-import os
 import sys
-import re
 import click
 import emoji
 from VoiceRecognizer import *
 from AiSpeaker import *
 import sounddevice as sd
+import json
+import requests
 
 class Talker:
     voiceRecognizer = None
     tts = None
     acceptText = ""
-    promptFrame = ""
+    # a nanoseconds is 10^-9 of a second.
+    SecondInNanoseconds = 1000000000
+    modelName = "chat-model"
+    chatContext = []
 
-    def __init__(self, textToSpeechObject, useTextOnly=False, voiceListenerObject=None, promptFrame="<input>"):
-        os.environ["PHYTHONUNBUFFERED"] = "1"
+    def __init__(self, textToSpeechObject, useTextOnly=False, voiceListenerObject=None):
         print("running chat")
 
         self.tts = textToSpeechObject
@@ -25,55 +27,45 @@ class Talker:
         if not useTextOnly:
             self.voiceRecognizer = voiceListenerObject
             self.acceptText = self.voiceRecognizer.getAcceptText()
-        self.promptFrame = promptFrame
 
-    def promptifyInput(self, input=""):
-        if self.promptFrame.find("<input>") < 0:
-            return input
-        inputSurround = self.promptFrame.split("<input>")
-        modified = inputSurround[0] + input
-        if len(inputSurround) > 1:
-            modified = modified + inputSurround[1]
-        return modified
-
-    def start(self, command = ["chat.exe --interactive-start"], firstPrompt="Hi!", useTextOnly=False):
+    def start(self, firstPrompt="Hi!", useTextOnly=False):
+        modelFile = open("Modelfile", "r")
+        modelFileContent = modelFile.read()
+        print("Model File Content:" + modelFileContent)
+        modelFile.close()
+        print("Creating model based on Modelfile, might take a while if this is the first time running: it'll download the model.")
+        # Ask to create a model based on the modelFile, if it already exists its okay. 
+        # https://github.com/jmorganca/ollama/blob/main/docs/api.md#create-a-model
+        request = requests.post(
+            "http://localhost:11434/api/create",
+            json = {
+                "name": self.modelName,
+                "modelfile": modelFileContent,
+                "stream": True
+                }
+        )
         try:
-            print("Starting up.")
-            process = Popen(command, stdout=PIPE, stdin=PIPE)
+            request.raise_for_status()
+            for line in request.iter_lines():
+                body = json.loads(line)
+                # print stream status result immediately
+                print("Model creation status:" + body.get("status"), end="\n", flush=True)
+                if body.get("status") == "success":
+                    request.close()
+                    self.runPromptLoop(firstPrompt, useTextOnly)
+        finally:
+            request.close()
+    
+    def runPromptLoop(self, firstPrompt="Hi!", useTextOnly=False):
+        try:
             running = True
             firstRun = True
-            timeTaken = 0.0
             while running:
-                if process.stdout.readable():
-                    if not firstRun:
-                        print("\nReply:")
-                    lineByte = process.stdout.readline()
-                    textProcessTime = time.time() - timeTaken
-                    line = lineByte.decode('utf-8')
-                    # clean up the line from the terminal before checking it.
-                    line = line.replace(">", "", 1)
-                    line = line.strip()
-                    # ['\x1b[1m\x1b[32m\x1b[0mMy favorite game is Minecraft.', 'It has a perfect ... use during adventures!', '\x1b[0m']
-                    # line still has ansi escape sequences like \x1b[1m\x1b[32m\x1b[0m\x1b[1m\x1b[32m\x1b[0m
-                    ansiEscape =re.compile(r'(\x9b|\x1b\[)[0-?]*[ -\/]*[@-~]')
-                    line = re.sub(ansiEscape,'', line)
-                    # Only speak if the line contains anything.
-                    if line:
-                        if not firstRun:
-                            print(" > Processing input time: " + str(textProcessTime) + "s.")
-                        print(line)
-                        print(" > Generating voice...")
-                        numpyWav = self.tts.generateSpeech(line)
-                        sd.play(data=numpyWav, blocking=True)
-                print("----")
-                if firstRun and process.stdin.writable() and firstPrompt != "":
-                    # First run recommended because the first processing of both inputs and voice take usually longer than everything after that.
-                    input = firstPrompt + "\n"
-                    encoded = input.encode('utf-8')
-                    process.stdin.write(encoded)
-                    process.stdin.flush()
-                    timeTaken = time.time()
-                elif process.stdin.writable():
+                print("----------------")
+                if firstRun:
+                    input = firstPrompt
+                else:
+                    # not first run, we check for user input, to use as prompts.
                     if not useTextOnly:
                         print("Say something, starting with \"" + self.acceptText + ",\". To quit, say \"exit\"):")
                         input = self.voiceRecognizer.listenToMic().lower().replace(self.acceptText, "", 1).strip()
@@ -86,23 +78,39 @@ class Talker:
                     if inputQuitCheck == "exit":
                         running = False
                         break
-                    elif len(input) <= 1 or input.isspace():
-                        input = "Hi!"
-                    input = emoji.replace_emoji(input, replace=lambda chars, data_dict: data_dict['en']) + "\n"
-                    input = self.promptifyInput(input)
-                    print(" > Processed input: " + input)
-                    # Newline is important, so the executable knows you've entered something and are done with it.
-                    input = input + "\n"
-                    encoded = input.encode('utf-8')
-                    process.stdin.write(encoded)
-                    process.stdin.flush()
-                    timeTaken = time.time()
+                if len(input) <= 1 or input.isspace():
+                    # no valid input exists, use a default one.
+                    input = "Hi!"
+                input = emoji.replace_emoji(input, replace=lambda chars, data_dict: data_dict['en']) + "\n"
+                print(" > Processed input: " + input)
+                # send prompt request to ollama server.
+                # https://github.com/jmorganca/ollama/blob/main/docs/api.md#request-no-streaming
+                request = requests.post(
+                    "http://localhost:11434/api/generate",
+                    json = {"model": self.modelName, "prompt": input, "stream": False, "context": self.chatContext}
+                )
+                request.raise_for_status()
+                for line in request.iter_lines():
+                    body = json.loads(line)
+                    response = body.get("response")
+                    if len(self.chatContext) == 0:
+                        self.chatContext = body.get("context")
+                    print("Model response:" + response)
+                    s = int(body.get("total_duration")) / self.SecondInNanoseconds
+                    print ("Model generation duration in sec:" + str(s))
+                    if body.get("done") is not True:
+                        raise Exception("Reponse model isn't done. Streaming should be disabled if it isn't.")
+                    print(" > Generating voice...")
+                    numpyWav = self.tts.generateSpeech(response)
+                    sd.play(data=numpyWav, blocking=True)
+                request.close()
                 if firstRun:
                     firstRun = False
                 time.sleep(0.01)
         finally:
-            process.terminate()
+            request.close()
             print("Finished.")
+
 
 if __name__ == "__main__":
     @click.group()
@@ -129,25 +137,18 @@ if __name__ == "__main__":
 
     @click.command()
     @click.option("--first-prompt", default="Hi!", help="Whether to start of immediately with a prompt. Use empty string \"\" to have no first prompt.", type=str)
-    @click.option("--prompt-frame", default="Input: <input> \nResponse: ", help="Whether to include a prompt frame that the input gets put into before it is passed to the chat model. \"<input>\" gets replaced by the chat's input.", type=str)
     @click.option("--text-chat", default=False, help="Whether to use text input instead of voice.", is_flag=True, type=bool)
-    @click.option("--chat-executable", default="chat.exe --interactive-start", help="Whether to use a specific executable from a certain location, including potential arguments.", type=str)
     @click.option("-a","--accept-text", default="computer", help="The magic word that the listener should use to finish the test with.", type=str)
     @click.option("--whisper-model", default="small.en", help="Which model to use for Whisper, see https://github.com/mallorbc/whisper_mic#available-models-and-languages", type=click.Choice(["tiny","base", "small","medium","tiny.en","base.en", "small.en","medium.en","large"]))
     @click.option("--energy-threshold", default=5000, help="Represents the energy level threshold for sounds. Values below this threshold are considered silence, and values above this threshold are considered speech.", type=int)
     @click.option("--dynamic-energy-threshold", default=False, help="Automatically adjusts Energy Threshold based on the currently ambient noise level while listening.", is_flag=True, type=bool)
     @click.option("--pause-threshold", default=800, help="In milliseconds how long of a pause to recognize a completion of a sentence.", type=int)
     @click.option("-v","--voice-sample", default="sample.wav", help="The voice file to use to inspire the text to speech.", type=str)  
-    def chat(first_prompt, text_chat, prompt_frame, chat_executable, accept_text, whisper_model, energy_threshold, dynamic_energy_threshold, pause_threshold, voice_sample):
+    def chat(first_prompt, text_chat, accept_text, whisper_model, energy_threshold, dynamic_energy_threshold, pause_threshold, voice_sample):
         tts = AiSpeak(voice_sample)
         listener = RecognizeVoice(acceptText=accept_text, micDeviceIndex=sd.default.device[0], model=whisper_model, energyThreshold=energy_threshold, dynamicEnergyThreshold=dynamic_energy_threshold, pauseThreshold=pause_threshold)
-        talker = Talker(textToSpeechObject=tts,  useTextOnly=text_chat, voiceListenerObject=listener, promptFrame=prompt_frame)
-        # alpaca.cpp chat.exe build from + the alpaca model at https://github.com/antimatter15/alpaca.cpp
-        #chat_executable = ["chat.exe --interactive-start"]
-        # gpt4all from https://github.com/nomic-ai/gpt4all/tree/main/chat
-        #chat_executable = ["gpt4all-lora-quantized-win64.exe", "--interactive-start"]
-        #chat_executable = ["gpt4all-lora-quantized-win64.exe -m gpt4all-lora-unfiltered-quantized.bin"]
-        talker.start(chat_executable, first_prompt, text_chat)
+        talker = Talker(textToSpeechObject=tts,  useTextOnly=text_chat, voiceListenerObject=listener)
+        talker.start(first_prompt, text_chat)
 
     @click.command()
     @click.option("-a","--accept-text", default="computer", help="The magic word that the listener should use to finish the test with.", type=str)
